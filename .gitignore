@@ -5,5 +5,9 @@ venv/
 build/
 dist/
 *.spec
+!ServiceManager.spec
 config.local.json
 config.json
+release/
+installer/HarvestedFiles.wxs
+installer/obj/

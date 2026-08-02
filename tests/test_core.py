@@ -8,10 +8,10 @@ import tempfile
 import threading
 import time
 import unittest
-
-import psutil
 from datetime import datetime
 from pathlib import Path
+
+import psutil
 
 from config_loader import load_config
 from process_manager import ProcessManager

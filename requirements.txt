@@ -1,3 +1,7 @@
 psutil>=5.9,<8
 pystray>=0.19,<1
 Pillow>=10,<13
+paramiko>=3.5,<5
+croniter>=6,<7
+tzdata>=2025.2
+pywin32>=311; platform_system == "Windows"

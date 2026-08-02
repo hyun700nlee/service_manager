@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-
 VALID_SCHEDULE_TYPES = {"none", "interval", "daily"}
 
 

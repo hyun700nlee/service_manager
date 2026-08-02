@@ -4,7 +4,6 @@ import select
 import socket
 import time
 
-
 IAC = 255
 DONT = 254
 DO = 253

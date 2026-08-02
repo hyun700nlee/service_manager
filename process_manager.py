@@ -5,7 +5,6 @@ import os
 import queue
 import subprocess
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
