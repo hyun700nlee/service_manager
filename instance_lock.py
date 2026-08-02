@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
+from pathlib import Path
 
 from storage import default_data_directory
 
@@ -11,15 +13,18 @@ class AlreadyRunningError(RuntimeError):
 
 
 class EngineInstanceLock:
-    def __init__(self):
+    def __init__(self, data_dir: str | Path | None = None):
         self._handle = None
         self._file = None
+        self.data_dir = Path(data_dir).expanduser().resolve() if data_dir else default_data_directory()
+        digest = hashlib.sha256(str(self.data_dir).casefold().encode("utf-8")).hexdigest()[:20]
+        self._mutex_name = f"Local\\PythonServiceManager-{digest}"
 
     def acquire(self) -> None:
         if os.name == "nt":
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.CreateMutexW.restype = ctypes.c_void_p
-            handle = kernel32.CreateMutexW(None, False, "Global\\PythonServiceManagerEngine-v1")
+            handle = kernel32.CreateMutexW(None, False, self._mutex_name)
             if not handle:
                 raise ctypes.WinError(ctypes.get_last_error())
             if ctypes.get_last_error() == 183:
@@ -29,7 +34,7 @@ class EngineInstanceLock:
             return
         import fcntl
 
-        path = default_data_directory() / "engine.lock"
+        path = self.data_dir / "application.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
         self._file = path.open("a+")
         try:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import os
 import re
 import threading
 from datetime import datetime, timedelta
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from credentials import SecretRedactor
-from storage import Repository, default_data_directory
+from storage import Repository
 
 
 def _safe_name(value: str) -> str:
@@ -29,28 +28,28 @@ class EventLogger:
         max_total_bytes: int = 1024 * 1024 * 1024,
     ):
         self.repository = repository
-        self.log_directory = Path(log_directory or default_data_directory() / "logs")
+        self.log_directory = Path(log_directory or repository.data_dir / "logs")
         self.log_directory.mkdir(parents=True, exist_ok=True)
         self.event_callback = event_callback
         self.retention_days = retention_days
         self.max_total_bytes = max_total_bytes
         self.redactor = SecretRedactor()
-        self._handlers: dict[tuple[str, str], logging.Handler] = {}
+        self._handlers: dict[tuple[str, str, str], logging.Handler] = {}
         self._lock = threading.RLock()
         self._closed = False
 
     def register_secret(self, value: str | None) -> None:
         self.redactor.register(value)
 
-    def _handler(self, source_type: str, source_id: str | None, source_name: str) -> logging.Handler:
-        key = (source_type, source_id or source_name)
+    def _handler(self, source_type: str, source_id: str | None, source_name: str, stream: str) -> logging.Handler:
+        key = (source_type, source_id or source_name, stream)
         with self._lock:
             existing = self._handlers.get(key)
             if existing:
                 return existing
-            directory = self.log_directory / source_type
+            directory = self.log_directory / _safe_name(source_id) if source_id else self.log_directory / source_type
             directory.mkdir(parents=True, exist_ok=True)
-            path = directory / f"{_safe_name(source_name)}-{_safe_name(source_id or 'system')}.log"
+            path = directory / f"{_safe_name(stream)}.log"
             handler = logging.handlers.RotatingFileHandler(
                 path, maxBytes=10 * 1024 * 1024, backupCount=10, encoding="utf-8", errors="replace"
             )
@@ -90,7 +89,7 @@ class EventLogger:
                     name="service-manager", level=getattr(logging, level.upper(), logging.INFO),
                     pathname="", lineno=0, msg=f"[{event_type}] [{stream}] {safe_message}", args=(), exc_info=None,
                 )
-                self._handler(source_type, source_id, source_name).emit(record)
+                self._handler(source_type, source_id, source_name, stream).emit(record)
             except (OSError, ValueError):
                 pass
         payload = {
@@ -103,22 +102,7 @@ class EventLogger:
                 self.event_callback(payload)
             except Exception:
                 pass
-        if event_type not in {"process_output", "command_output"}:
-            self._write_windows_event(source_name, safe_message, error=level.upper() in {"ERROR", "CRITICAL"})
         return event_id
-
-    @staticmethod
-    def _write_windows_event(source: str, message: str, *, error: bool) -> None:
-        if os.name != "nt":
-            return
-        try:
-            import servicemanager  # type: ignore
-            if error:
-                servicemanager.LogErrorMsg(f"{source}: {message}")
-            else:
-                servicemanager.LogInfoMsg(f"{source}: {message}")
-        except Exception:
-            pass
 
     def cleanup(self) -> None:
         cutoff = datetime.now() - timedelta(days=self.retention_days)

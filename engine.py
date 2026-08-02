@@ -12,23 +12,18 @@ from models import RemoteJobDefinition, ServiceDefinition
 from notifications import NotificationDispatcher
 from remote_jobs import RemoteJobManager, fetch_ssh_fingerprint
 from scheduler import EngineScheduler
-from storage import Repository, default_data_directory
+from storage import Repository
 from supervisor import ServiceSupervisor
 
 
 class ServiceManagerEngine:
-    def __init__(self, *, database_path: str | Path | None = None, legacy_config: str | Path | None = None):
-        self.repository = Repository(database_path)
+    def __init__(self, *, data_dir: str | Path | None = None, config_path: str | Path | None = None):
+        self.repository = Repository(data_dir=data_dir, config_path=config_path)
         self.logger = EventLogger(self.repository)
         self.notifications = NotificationDispatcher(self.repository)
         self.logger.event_callback = self.notifications.handle_event
-        if legacy_config:
-            try:
-                result = self.repository.migrate_legacy_config(legacy_config)
-                if result:
-                    self.logger.emit("INFO", "system", "시스템", "migration_complete", f"기존 설정을 가져왔습니다: {result}")
-            except Exception as exc:
-                self.logger.emit("ERROR", "system", "시스템", "migration_failed", str(exc))
+        for warning in self.repository.startup_warnings:
+            self.logger.emit("WARNING", "system", "시스템", "storage_recovered", warning)
         self.supervisor = ServiceSupervisor(self.repository, self.logger)
         self.remote_jobs = RemoteJobManager(self.repository, self.logger)
         self.scheduler = EngineScheduler(self.repository, self.supervisor, self.remote_jobs, self.logger)
@@ -55,6 +50,7 @@ class ServiceManagerEngine:
                 events = self.repository.query_events(
                     limit=int(request.get("limit", 500)), after_id=int(request.get("after_id", 0)),
                     source_id=request.get("source_id"), level=request.get("level"), keyword=request.get("keyword"),
+                    start_time=request.get("start_time"), end_time=request.get("end_time"),
                 )
                 from dataclasses import asdict
                 return {"ok": True, "events": [asdict(item) for item in events]}
@@ -169,7 +165,8 @@ class ServiceManagerEngine:
                 self.logger.emit("INFO", "system", "시스템", "settings_saved", "알림 설정이 저장되었습니다.")
                 return {"ok": True, "notifications": settings}
             if command == "diagnostics":
-                return {"ok": True, "path": str(self._diagnostics(str(request.get("path") or default_data_directory() / "diagnostics.zip")))}
+                default_path = self.repository.data_dir / "diagnostics.zip"
+                return {"ok": True, "path": str(self._diagnostics(str(request.get("path") or default_path)))}
             raise ValueError(f"지원하지 않는 명령: {command}")
         except Exception as exc:
             self.logger.emit("ERROR", "system", "시스템", "command_failed", f"{command} 실패: {exc}")
@@ -196,7 +193,11 @@ class ServiceManagerEngine:
         export = base / "configuration-redacted.json"
         self.repository.export_json(export)
         info = base / "system.txt"
-        info.write_text(f"Python: {sys.version}\nPlatform: {sys.platform}\nDatabase: {self.repository.path}\n", encoding="utf-8")
+        info.write_text(
+            f"Python: {sys.version}\nPlatform: {sys.platform}\nData directory: {self.repository.data_dir}\n"
+            f"Configuration: {self.repository.path}\nStorage: JSON\n",
+            encoding="utf-8",
+        )
         events = self.repository.query_events(limit=1000)
         import json
         from dataclasses import asdict

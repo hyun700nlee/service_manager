@@ -1,58 +1,49 @@
 # 주요 기능 테스트 결과
 
-실행 일자: 2026-07-29
+실행 일자: 2026-08-02
 
 ## 자동 테스트
 
-실행 명령:
-
 ```text
-python -m unittest discover -s tests -v
+.venv\Scripts\python -m unittest discover -s tests -v
 ```
 
-결과:
-
-```text
-test_invalid_item_is_disabled_without_global_failure ... ok
-test_missing_config_returns_error_without_exception ... ok
-test_valid_config_is_enabled ... ok
-test_start_log_and_stop ... ok
-test_daily_schedule_uses_next_day_after_missed_time ... ok
-test_interval_advance_skips_backfill ... ok
-test_login_command_and_success ... ok
-
-Ran 7 tests
-OK
-```
+결과: 총 22개 테스트 통과
 
 검증 범위:
 
-- config.json 누락 시 예외로 종료되지 않고 오류 결과를 반환하는지 확인
-- 잘못된 개별 설정이 전체 프로그램 설정 로드를 중단하지 않는지 확인
-- 정상 서비스 및 Telnet 설정이 활성화되는지 확인
-- Python 서비스 시작, PID 상태 이벤트, stdout 수집, 부모·자식 프로세스 트리 종료 확인
-- 매일 고정 시각 계산 시 지난 시각을 소급 실행하지 않는지 확인
-- interval 예약이 누락 회차를 반복 실행하지 않고 다음 미래 시각으로 이동하는지 확인
-- 로컬 모의 Telnet 서버에서 로그인 프롬프트, 비밀번호 프롬프트, 셸 프롬프트, 명령 실행, 중복 실행 거부, 성공 상태 전환 확인
+- 기존 설정 검증, 예약 계산, 프로세스 트리 종료와 모의 Telnet 회귀 테스트 7개
+- JSON 설정·상태·자격증명 재시작 복원과 비밀값 없는 내보내기
+- 기존 `config.json` 변환, 원본 백업과 평문 비밀번호의 DPAPI 전환
+- 손상된 설정의 직전 정상 백업 복구 및 지원하지 않는 스키마의 안전한 실행 차단
+- 여러 스레드의 상태 저장 후에도 유효한 JSON 유지
+- JSONL 이벤트 회전, 검색, 손상 행 건너뛰기와 보존 정리
+- TCP 상태 확인, 반복 장애 회로 차단과 desired-running 상태 복원
+- 데이터 경로별 단일 인스턴스 잠금과 standalone 임베디드 엔진 CRUD
 
-## 정적·구문 검사
+## 정적·의존성 검사
+
+다음 검사가 모두 성공했습니다.
 
 ```text
-python -m compileall -q .
+.venv\Scripts\ruff check .
+.venv\Scripts\python -m compileall -q .
+.venv\Scripts\python -m pip check
+git diff --check
 ```
 
-결과: 전체 Python 파일 컴파일 성공
+## PyInstaller onefile 검증
 
-## GUI 스모크 테스트
+`build.ps1 -SkipTests`로 `dist\PythonServiceManager.exe` 단일 파일 생성을 확인했습니다.
 
-Linux 가상 디스플레이에서 tkinter 메인 창 생성, 서비스·Telnet 표 구성, 설정 오류 이벤트 처리, `after()` 이벤트 루프 진입 후 정상 종료를 확인했습니다.
+- 빌드 환경: Python 3.13.14, PyInstaller 6.21.0, Windows 10
+- EXE 크기: 26,009,887 bytes
+- 격리된 `--data-dir`로 EXE를 실제 시작하고 GUI 프로세스 유지 확인
+- `config.json`, `state.json`, `credentials.json` 자동 생성 확인
+- 테스트가 시작한 EXE 프로세스만 종료해 다른 실행 중인 프로그램에 영향을 주지 않음
 
-## 대상 Windows PC에서 추가 확인할 항목
+## 별도 환경에서 확인할 항목
 
-다음 항목은 실제 Windows 10/11 및 사내 네트워크 환경이 필요하므로 산출물 환경에서는 완전 검증하지 않았습니다.
-
-- Windows 알림 영역 아이콘 생성·복원·메뉴 동작
-- 실제 Python GUI 서비스의 자식 프로세스 트리 종료
-- 실제 Telnet 서버의 프롬프트·문자 인코딩 적합성
-- PyInstaller 단일 EXE 실행
-- 24시간 이상 연속 운전
+- 실제 SSH/Telnet 장비의 인증·인코딩·호스트 키 변경 시나리오
+- Windows 10/11의 트레이 메뉴와 DPI 조합별 시각 확인
+- 절전·복귀, 시각 변경·DST와 24시간 이상 연속 운전

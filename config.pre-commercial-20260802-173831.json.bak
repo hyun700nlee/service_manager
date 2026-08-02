@@ -1,0 +1,37 @@
+{
+  "services": [
+    {
+      "name": "Test Map Service",
+      "working_directory": "C://Users/mia02/OneDrive/문서/hbmhub",
+      "python_executable": "C:/Users/mia02/OneDrive/문서/hbmhub/.venv/Scripts/python.exe",
+      "script": "scripts/run_gui.py",
+      "arguments": [],
+      "auto_start": true,
+      "schedule_type": "daily",
+      "restart_time": "04:00",
+      "restart_interval_minutes": null
+    }
+  ],
+  "telnet_jobs": [
+    {
+      "name": "Linux Data Refresh",
+      "host": "192.168.0.10",
+      "port": 23,
+      "username": "user01",
+      "password": "password",
+      "login_prompt": "login:",
+      "password_prompt": "Password:",
+      "shell_prompt": "$",
+      "commands": [
+        "cd /home/user01/job",
+        "./refresh_data.sh"
+      ],
+      "connect_timeout_seconds": 10,
+      "command_timeout_seconds": 60,
+      "auto_run": true,
+      "schedule_type": "interval",
+      "run_time": null,
+      "interval_minutes": 30
+    }
+  ]
+}

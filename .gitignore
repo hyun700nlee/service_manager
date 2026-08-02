@@ -9,5 +9,3 @@ dist/
 config.local.json
 config.json
 release/
-installer/HarvestedFiles.wxs
-installer/obj/

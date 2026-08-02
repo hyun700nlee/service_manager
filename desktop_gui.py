@@ -11,11 +11,18 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from engine import ServiceManagerEngine
-from instance_lock import EngineInstanceLock
-from ipc import EngineClient
+from instance_lock import AlreadyRunningError, EngineInstanceLock
 from models import RemoteJobDefinition, ServiceDefinition
+from storage import StorageCorruptionError
 
 APP_TITLE = "Python 서비스 관리자"
+
+
+def resource_path(name: str) -> Path:
+    """Return a bundled resource path in source and PyInstaller onefile builds."""
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    base = Path(bundle_root) if bundle_root else Path(__file__).resolve().parent
+    return base / name
 
 
 class EmbeddedClient:
@@ -308,7 +315,7 @@ class NotificationEditor(tk.Toplevel):
 
 
 class CommercialApp:
-    def __init__(self, root: tk.Tk, client):
+    def __init__(self, root: tk.Tk, client, *, startup_warnings: list[str] | None = None):
         self.root = root
         self.client = client
         self.data: dict[str, Any] = {"services": [], "remote_jobs": []}
@@ -316,6 +323,12 @@ class CommercialApp:
         self._response_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.tray_icon = None
         root.title(APP_TITLE)
+        icon_path = resource_path("icon.ico")
+        if icon_path.is_file():
+            try:
+                root.iconbitmap(default=str(icon_path))
+            except tk.TclError:
+                pass
         root.geometry("1180x780")
         root.minsize(920, 620)
         root.protocol("WM_DELETE_WINDOW", self._hide_window)
@@ -324,6 +337,9 @@ class CommercialApp:
         self._setup_tray()
         self.root.after(50, self.refresh)
         self.root.after(100, self._drain_responses)
+        if startup_warnings:
+            warning_text = "\n\n".join(startup_warnings)
+            self.root.after(250, lambda: messagebox.showwarning("데이터 복구 알림", warning_text, parent=self.root))
 
     def _build(self) -> None:
         outer = ttk.Frame(self.root, padding=8)
@@ -411,21 +427,26 @@ class CommercialApp:
         frame = ttk.Frame(self.tabs, padding=20)
         self.tabs.add(frame, text="설정 및 지원")
         ttk.Label(frame, text="설정 관리", font=("Segoe UI", 12, "bold")).pack(anchor="w")
-        for text, command in (("JSON 가져오기", self.import_json), ("JSON 내보내기", self.export_json), ("데이터베이스 백업", self.backup), ("지원 진단 ZIP 생성", self.diagnostics)):
+        for text, command in (("JSON 가져오기", self.import_json), ("JSON 내보내기", self.export_json), ("JSON 데이터 백업", self.backup), ("지원 진단 ZIP 생성", self.diagnostics)):
             ttk.Button(frame, text=text, command=command, width=28).pack(anchor="w", pady=4)
         ttk.Button(frame, text="장애 알림 설정", command=lambda: NotificationEditor(self.root, self.client), width=28).pack(anchor="w", pady=4)
         ttk.Separator(frame).pack(fill=tk.X, pady=16)
         ttk.Label(frame, text="보안 원칙", font=("Segoe UI", 12, "bold")).pack(anchor="w")
         ttk.Label(frame, text="• 비밀값은 Windows DPAPI로 보호됩니다.\n• JSON 내보내기에는 비밀번호가 포함되지 않습니다.\n• Telnet은 명시적으로 위험을 확인한 작업에만 허용됩니다.", justify=tk.LEFT).pack(anchor="w", pady=8)
-        ttk.Button(frame, text="관리 GUI 종료 (엔진은 계속 실행)", command=self._quit_gui).pack(anchor="w", pady=(18, 0))
+        ttk.Label(
+            frame,
+            text="이 버전은 GUI와 관리 엔진이 하나의 프로세스로 실행됩니다. 프로그램을 종료하면 감시·예약·복구도 중단됩니다.",
+            foreground="#8a4b00",
+            wraplength=760,
+        ).pack(anchor="w", pady=(16, 4))
+        ttk.Button(frame, text="프로그램 종료 (관리 프로세스도 종료)", command=self._quit_gui).pack(anchor="w", pady=(4, 0))
 
     def _setup_tray(self) -> None:
         try:
             import pystray
             from PIL import Image, ImageDraw
 
-            base = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
-            icon_path = base / "icon.ico"
+            icon_path = resource_path("icon.ico")
             if icon_path.is_file():
                 image = Image.open(icon_path)
             else:
@@ -434,7 +455,7 @@ class CommercialApp:
                 draw.rounded_rectangle((10, 8, 54, 56), radius=8, fill=(240, 240, 240, 255))
             menu = pystray.Menu(
                 pystray.MenuItem("창 열기", lambda *_: self.root.after(0, self._show_window), default=True),
-                pystray.MenuItem("GUI 종료", lambda *_: self.root.after(0, self._quit_gui)),
+                pystray.MenuItem("프로그램 종료", lambda *_: self.root.after(0, self._quit_gui)),
             )
             self.tray_icon = pystray.Icon("python_service_manager", image, APP_TITLE, menu)
             self.tray_icon.run_detached()
@@ -447,7 +468,7 @@ class CommercialApp:
             return
         self.root.withdraw()
         try:
-            self.tray_icon.notify("관리 GUI를 닫아도 백그라운드 엔진은 계속 실행됩니다.", APP_TITLE)
+            self.tray_icon.notify("창을 닫아도 트레이에서 감시·예약·복구가 계속 실행됩니다.", APP_TITLE)
         except Exception:
             pass
 
@@ -457,6 +478,12 @@ class CommercialApp:
         self.root.lift()
 
     def _quit_gui(self) -> None:
+        if not messagebox.askyesno(
+            "프로그램 종료",
+            "프로그램을 종료하면 감시·예약·자동복구가 중단되고 관리 중인 프로세스가 정상 종료됩니다. 계속하시겠습니까?",
+            parent=self.root,
+        ):
+            return
         if self.tray_icon is not None:
             try:
                 self.tray_icon.stop()
@@ -649,25 +676,21 @@ class CommercialApp:
                 messagebox.showinfo("진단 자료 생성", response["path"], parent=self.root)
 
 
-def run_gui(*, standalone: bool = False, database: str | None = None, legacy_config: str | None = None) -> None:
+def run_gui(*, data_dir: str | Path | None = None, config_path: str | Path | None = None) -> None:
     if sys.platform == "win32":
         try:
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass
+    instance_lock = EngineInstanceLock(data_dir)
+    instance_lock.acquire()
     embedded_engine = None
-    instance_lock = None
-    if standalone:
-        instance_lock = EngineInstanceLock()
-        instance_lock.acquire()
-        embedded_engine = ServiceManagerEngine(database_path=database, legacy_config=legacy_config)
-        client = EmbeddedClient(embedded_engine)
-    else:
-        client = EngineClient()
-    root = tk.Tk()
-    CommercialApp(root, client)
     try:
+        embedded_engine = ServiceManagerEngine(data_dir=data_dir, config_path=config_path)
+        client = EmbeddedClient(embedded_engine)
+        root = tk.Tk()
+        CommercialApp(root, client, startup_warnings=embedded_engine.repository.startup_warnings)
         root.mainloop()
     finally:
         if embedded_engine:
@@ -677,12 +700,16 @@ def run_gui(*, standalone: bool = False, database: str | None = None, legacy_con
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--standalone", action="store_true")
-    parser.add_argument("--database")
-    parser.add_argument("--legacy-config")
-    args, _ = parser.parse_known_args()
-    run_gui(standalone=args.standalone, database=args.database, legacy_config=args.legacy_config)
+    parser = argparse.ArgumentParser(description="Standalone Python Service Manager")
+    parser.add_argument("--data-dir", help="JSON 설정과 로그를 저장할 폴더")
+    args = parser.parse_args()
+    try:
+        run_gui(data_dir=args.data_dir)
+    except (AlreadyRunningError, StorageCorruptionError) as exc:
+        error_root = tk.Tk()
+        error_root.withdraw()
+        messagebox.showerror(APP_TITLE, str(exc), parent=error_root)
+        error_root.destroy()
 
 
 if __name__ == "__main__":

@@ -4,4 +4,3 @@ Pillow>=10,<13
 paramiko>=3.5,<5
 croniter>=6,<7
 tzdata>=2025.2
-pywin32>=311; platform_system == "Windows"

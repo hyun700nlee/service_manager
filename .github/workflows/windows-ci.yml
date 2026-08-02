@@ -33,10 +33,8 @@ jobs:
           python-version: "3.13"
       - run: python -m venv .venv
       - run: .venv\Scripts\python -m pip install -r requirements-dev.txt
-      - run: powershell -ExecutionPolicy Bypass -File build.ps1 -SkipTests -SkipMsi
+      - run: powershell -ExecutionPolicy Bypass -File build.ps1 -SkipTests
       - uses: actions/upload-artifact@v4
         with:
-          name: unsigned-windows-bundle
-          path: |
-            dist/ServiceManager
-            release/sbom.json
+          name: standalone-windows-exe
+          path: dist/PythonServiceManager.exe
